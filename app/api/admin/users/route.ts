@@ -12,7 +12,15 @@ export async function GET() {
     const db = getDb()
     const users = db
       .prepare(
-        "SELECT id, username, display_name, is_admin, created_at FROM users ORDER BY created_at"
+        `SELECT u.id, u.username, u.display_name, u.is_admin, u.created_at,
+                COALESCE(vc.vault_count, 0) as vault_count
+         FROM users u
+         LEFT JOIN (
+           SELECT user_id, COUNT(*) as vault_count
+           FROM vaults
+           GROUP BY user_id
+         ) vc ON vc.user_id = u.id
+         ORDER BY u.created_at`
       )
       .all() as {
       id: string
@@ -20,7 +28,20 @@ export async function GET() {
       display_name: string
       is_admin: number
       created_at: string
+      vault_count: number
     }[]
+
+    // Get all vaults grouped by user
+    const vaults = db
+      .prepare("SELECT id, name, user_id, created_at FROM vaults ORDER BY created_at")
+      .all() as { id: string; name: string; user_id: string; created_at: string }[]
+
+    const vaultsByUser = new Map<string, typeof vaults>()
+    for (const v of vaults) {
+      const list = vaultsByUser.get(v.user_id) ?? []
+      list.push(v)
+      vaultsByUser.set(v.user_id, list)
+    }
 
     return NextResponse.json({
       users: users.map((u) => ({
@@ -29,6 +50,12 @@ export async function GET() {
         displayName: u.display_name,
         isAdmin: u.is_admin === 1,
         createdAt: u.created_at,
+        vaultCount: u.vault_count,
+        vaults: (vaultsByUser.get(u.id) ?? []).map((v) => ({
+          id: v.id,
+          name: v.name,
+          createdAt: v.created_at,
+        })),
       })),
     })
   } catch (error) {

@@ -34,6 +34,10 @@ import {
   CopyIcon,
   SparklesIcon,
   KeyRoundIcon,
+  UsersIcon,
+  UserPlusIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -116,6 +120,92 @@ function SectionCard({
   )
 }
 
+function AdminUserRow({
+  adminUser,
+}: {
+  adminUser: {
+    id: string
+    username: string
+    displayName: string
+    isAdmin: boolean
+    createdAt: string
+    vaultCount: number
+    vaults: Array<{ id: string; name: string; createdAt: string }>
+  }
+}) {
+  const [expanded, setExpanded] = React.useState(false)
+
+  return (
+    <>
+      <tr className="group">
+        <td className="py-2.5 pr-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-7 items-center justify-center rounded-full bg-muted text-xs font-medium uppercase">
+              {adminUser.displayName.charAt(0)}
+            </div>
+            <div>
+              <p className="font-medium">{adminUser.displayName}</p>
+              <p className="text-xs text-muted-foreground">
+                @{adminUser.username}
+              </p>
+            </div>
+          </div>
+        </td>
+        <td className="py-2.5 pr-4">
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              adminUser.isAdmin
+                ? "bg-primary/10 text-primary"
+                : "bg-muted text-muted-foreground"
+            }`}
+          >
+            {adminUser.isAdmin ? "Admin" : "User"}
+          </span>
+        </td>
+        <td className="py-2.5 pr-4">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {expanded ? (
+              <ChevronDownIcon className="size-3.5" />
+            ) : (
+              <ChevronRightIcon className="size-3.5" />
+            )}
+            {adminUser.vaultCount} vault
+            {adminUser.vaultCount !== 1 ? "s" : ""}
+          </button>
+        </td>
+        <td className="py-2.5 text-muted-foreground">
+          {new Date(adminUser.createdAt).toLocaleDateString()}
+        </td>
+      </tr>
+      {expanded && adminUser.vaults.length > 0 && (
+        <tr>
+          <td colSpan={4} className="pb-2 pl-10">
+            <div className="space-y-1 rounded-md bg-muted/50 p-2">
+              {adminUser.vaults.map((v) => (
+                <div
+                  key={v.id}
+                  className="flex items-center justify-between text-xs"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <DatabaseIcon className="size-3 text-muted-foreground" />
+                    <span>{v.name}</span>
+                  </div>
+                  <span className="text-muted-foreground">
+                    {new Date(v.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
 export function SettingsPanel() {
   const router = useRouter()
   const { theme, setTheme } = useTheme()
@@ -128,7 +218,7 @@ export function SettingsPanel() {
 
   // Read active settings section from URL pathname (/settings/ai, /settings/data, etc.)
   const pathname = usePathname()
-  const validTabs = ["general", "account", "data", "sync", "shortcuts", "ai", "appearance", "about", "update"]
+  const validTabs = ["general", "account", "data", "sync", "shortcuts", "ai", "appearance", "about", "update", "admin"]
   const sectionFromPath = React.useMemo(() => {
     // Extract section from /settings/[section] — also handle legacy #hash
     const segments = pathname.split("/")
@@ -175,6 +265,21 @@ export function SettingsPanel() {
     { id: string; device_name: string; created_at: string }[]
   >([])
   const [passkeyName, setPasskeyName] = React.useState("")
+
+  // Admin state
+  const [adminUsers, setAdminUsers] = React.useState<
+    Array<{
+      id: string
+      username: string
+      displayName: string
+      isAdmin: boolean
+      createdAt: string
+      vaultCount: number
+      vaults: Array<{ id: string; name: string; createdAt: string }>
+    }>
+  >([])
+  const [registrationOpen, setRegistrationOpen] = React.useState(false)
+  const [adminLoading, setAdminLoading] = React.useState(false)
 
   async function fetchTwoFactorStatus() {
     try {
@@ -572,6 +677,21 @@ export function SettingsPanel() {
       .catch(() => {})
   }, [])
 
+  // Load admin data when admin tab is active
+  React.useEffect(() => {
+    if (activeTab !== "admin" || !user?.isAdmin) return
+    setAdminLoading(true)
+    Promise.all([
+      fetch("/api/admin/users").then((r) => r.json()),
+      fetch("/api/admin/config").then((r) => r.json()),
+    ])
+      .then(([usersData, configData]) => {
+        setAdminUsers(usersData.users ?? [])
+        setRegistrationOpen(configData.registrationOpen ?? false)
+      })
+      .finally(() => setAdminLoading(false))
+  }, [activeTab, user?.isAdmin])
+
   // Load backup state
   React.useEffect(() => {
     fetch("/api/backup/providers")
@@ -726,7 +846,16 @@ export function SettingsPanel() {
                         icon: ArrowDownCircleIcon,
                         label: "Update",
                       },
-                    ] as const
+                      ...(user?.isAdmin
+                        ? [
+                            {
+                              value: "admin" as const,
+                              icon: ShieldCheckIcon,
+                              label: "Admin",
+                            },
+                          ]
+                        : []),
+                    ]
                   ).map((tab) => (
                     <TabsTrigger
                       key={tab.value}
@@ -2144,6 +2273,87 @@ export function SettingsPanel() {
                 </div>
               </SectionCard>
             </TabsContent>
+
+            {/* ── Admin Tab ── */}
+            {user?.isAdmin && (
+              <TabsContent value="admin" className="space-y-6">
+                {/* Registration */}
+                <SectionCard
+                  title="Registration"
+                  description="Control who can create accounts"
+                  icon={UserPlusIcon}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">
+                        Open registration
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Allow new users to register accounts on this instance
+                      </p>
+                    </div>
+                    <Switch
+                      checked={registrationOpen}
+                      onCheckedChange={async (checked) => {
+                        try {
+                          const res = await fetch("/api/admin/config", {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              registrationOpen: checked,
+                            }),
+                          })
+                          if (res.ok) {
+                            const data = await res.json()
+                            setRegistrationOpen(data.registrationOpen)
+                            toast.success(
+                              data.registrationOpen
+                                ? "Registration enabled"
+                                : "Registration disabled"
+                            )
+                          } else {
+                            toast.error("Failed to update registration setting")
+                          }
+                        } catch {
+                          toast.error("Failed to update registration setting")
+                        }
+                      }}
+                    />
+                  </div>
+                </SectionCard>
+
+                {/* Users */}
+                <SectionCard
+                  title="Users"
+                  description={`${adminUsers.length} registered user${adminUsers.length !== 1 ? "s" : ""}`}
+                  icon={UsersIcon}
+                >
+                  {adminLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <LoaderIcon className="size-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left text-xs font-medium text-muted-foreground">
+                            <th className="pb-2 pr-4">User</th>
+                            <th className="pb-2 pr-4">Role</th>
+                            <th className="pb-2 pr-4">Vaults</th>
+                            <th className="pb-2">Created</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {adminUsers.map((u) => (
+                            <AdminUserRow key={u.id} adminUser={u} />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </SectionCard>
+              </TabsContent>
+            )}
             </div>
           </Tabs>
         </div>
